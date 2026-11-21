@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link, Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { ArrowLeft, CircleCheck, Lock, Printer } from 'lucide-react'
+import { kickEmails } from '../lib/courriels'
 import { useSession } from '../lib/session'
 import { rpc, supabase } from '../lib/supabase'
 import { longDate, money, type Invoice } from '../lib/types'
@@ -72,6 +73,7 @@ export function Checkout() {
     try {
       await new Promise((r) => setTimeout(r, 900))
       await rpc('pay_invoice_simulated', { p_invoice: inv!.id })
+      kickEmails()
       await refresh()
       navigate('/adhesion/merci', { replace: true })
     } catch (e) {

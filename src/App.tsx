@@ -10,6 +10,7 @@ import Join from './pages/Join'
 import { Checkout, InvoiceView, Thanks } from './pages/Payment'
 import Organization from './pages/Organization'
 import Invitation from './pages/Invitation'
+import Decline from './pages/Decline'
 import Admin from './pages/Admin'
 import Account from './pages/Account'
 
@@ -89,6 +90,7 @@ export default function App() {
       <Routes>
         <Route path="/connexion" element={<Login />} />
         <Route path="/invitation/:token" element={<Invitation />} />
+        <Route path="/invitation/:token/refuser" element={<Decline />} />
         <Route element={<Gate />}>
           <Route path="/bienvenue" element={<Welcome />} />
           <Route path="/paiement/:invoiceId" element={<Checkout />} />

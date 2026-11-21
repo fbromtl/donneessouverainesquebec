@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Check } from 'lucide-react'
+import { kickEmails } from '../lib/courriels'
 import { useSession } from '../lib/session'
 import { rpc, supabase } from '../lib/supabase'
 import { longDate, money, type EmployeeRange, type OrgKind, type Tier } from '../lib/types'
@@ -246,7 +247,10 @@ export default function Join() {
           signed_name: draft.signed_name.trim(),
         },
       })
-      if (draft.method === 'transfer') await rpc('choose_transfer', { p_invoice: res.invoice_id })
+      if (draft.method === 'transfer') {
+        await rpc('choose_transfer', { p_invoice: res.invoice_id })
+        kickEmails()
+      }
       sessionStorage.removeItem(DRAFT_KEY)
       await refresh()
       navigate(draft.method === 'card' ? `/paiement/${res.invoice_id}` : '/adhesion/merci?mode=virement')

@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react'
 import { Link, Navigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Check, Copy } from 'lucide-react'
+import { sendInvitationEmail, type InvitationSent } from '../lib/courriels'
 import { useSession } from '../lib/session'
 import { rpc, supabase } from '../lib/supabase'
 import { KIND_LABEL, longDate, money, type Invoice } from '../lib/types'
@@ -22,13 +23,38 @@ interface InviteRow {
   revoked_at: string | null
 }
 
-/** Lien d'invitation à copier. Le jeton n'existe en clair qu'ici, une seule fois. */
-export function InviteLink({ token, email }: { token: string; email: string }) {
+/**
+ * Résultat d'une invitation : partie par courriel, ou à transmettre à la main.
+ * Le jeton n'existe en clair qu'ici, une seule fois.
+ */
+export function InviteLink({
+  token,
+  email,
+  sent,
+  sendError,
+}: {
+  token: string
+  email: string
+  sent: InvitationSent | null
+  sendError: string | null
+}) {
   const [copied, setCopied] = useState(false)
-  const url = `${window.location.origin}/invitation/${token}`
+  const url = sent?.link ?? `${window.location.origin}/invitation/${token}`
+  const delivered = sent?.mode === 'smtp'
+  const title = delivered
+    ? `Invitation envoyée à ${email}`
+    : sendError
+      ? "Invitation créée, mais le courriel n'est pas parti"
+      : `Invitation créée pour ${email}, envoi simulé`
   return (
-    <Notice tone="ok" title={`Invitation créée pour ${email}`}>
-      <p>Copiez ce lien et envoyez-le-lui. Il n'est affiché qu'une fois et reste valide 30 jours.</p>
+    <Notice tone={delivered ? 'ok' : 'warn'} title={title}>
+      <p>
+        {delivered
+          ? 'Le courriel contient un lien qui connecte la personne en un clic. Vous pouvez aussi lui transmettre ce lien, valide 30 jours.'
+          : sendError
+            ? `${sendError} Copiez ce lien et envoyez-le-lui : il n'est affiché qu'une fois et reste valide 30 jours.`
+            : "Aucun service d'envoi n'est encore branché, donc aucun courriel n'est parti. Copiez ce lien et envoyez-le-lui : il n'est affiché qu'une fois."}
+      </p>
       <div className="mt-3 flex flex-wrap gap-2">
         <Input readOnly value={url} onFocus={(e) => e.currentTarget.select()} className="min-w-0 flex-1 text-sm" aria-label="Lien d'invitation" />
         <Button
@@ -69,7 +95,7 @@ export default function Organization() {
   const [email, setEmail] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [created, setCreated] = useState<{ token: string; email: string } | null>(null)
+  const [created, setCreated] = useState<{ token: string; email: string; sent: InvitationSent | null; sendError: string | null } | null>(null)
 
   const members = useQuery({
     queryKey: ['org', org?.id, 'equipe'],
@@ -116,7 +142,14 @@ export default function Organization() {
     setCreated(null)
     try {
       const token = await rpc<string>('create_invitation', { p_email: email, p_org: org!.id })
-      setCreated({ token, email: email.trim() })
+      let sent: InvitationSent | null = null
+      let sendError: string | null = null
+      try {
+        sent = await sendInvitationEmail(token)
+      } catch (err) {
+        sendError = (err as Error).message
+      }
+      setCreated({ token, email: email.trim(), sent, sendError })
       setEmail('')
       await qc.invalidateQueries({ queryKey: ['org', org!.id, 'invitations'] })
     } catch (err) {
@@ -213,10 +246,10 @@ export default function Organization() {
                   </Field>
                 </div>
                 <Button type="submit" variant="secondary" loading={busy}>
-                  Créer l'invitation
+                  Envoyer l'invitation
                 </Button>
               </form>
-              {created && <InviteLink token={created.token} email={created.email} />}
+              {created && <InviteLink token={created.token} email={created.email} sent={created.sent} sendError={created.sendError} />}
               {(invites.data ?? []).length > 0 && (
                 <ul className="divide-y divide-line border-y border-line text-[15px]">
                   {invites.data!.map((i) => (

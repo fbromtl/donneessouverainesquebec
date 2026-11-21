@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { emailStatus, kickEmails, sendInvitationEmail, type InvitationSent } from '../lib/courriels'
 import { useSession } from '../lib/session'
 import { rpc, supabase } from '../lib/supabase'
 import { KIND_LABEL, longDate, money, type Membership, type OrgKind } from '../lib/types'
@@ -48,6 +49,7 @@ function Request({ row, me, onDone }: { row: Row; me: string; onDone: () => void
     setError(null)
     try {
       await rpc(fn, args)
+      kickEmails()
       onDone()
       setMode('idle')
       setText('')
@@ -198,10 +200,36 @@ function Request({ row, me, onDone }: { row: Row; me: string; onDone: () => void
   )
 }
 
+interface OutboxRow {
+  id: string
+  template: string
+  to_email: string
+  status: 'queued' | 'sending' | 'sent' | 'simulated' | 'failed'
+  subject: string | null
+  body_text: string | null
+  error: string | null
+  created_at: string
+}
+const TEMPLATE_LABEL: Record<string, string> = {
+  paiement_recu: 'Paiement reçu',
+  adhesion_confirmee: 'Adhésion confirmée',
+  adhesion_refusee: 'Demande refusée',
+  facture_a_regler: 'Facture à régler',
+  demande_a_traiter: "Demande à traiter, pour l'équipe",
+  invitation: 'Invitation',
+}
+function mailState(status: OutboxRow['status']) {
+  if (status === 'sent') return <Badge tone="ok">Envoyé</Badge>
+  if (status === 'simulated') return <Badge tone="warn">Simulé</Badge>
+  if (status === 'failed') return <Badge tone="danger">Échec</Badge>
+  return <Badge tone="accent">En file</Badge>
+}
+
 const TABS = [
   ['demandes', 'Demandes'],
   ['membres', 'Membres'],
   ['invitations', 'Invitations'],
+  ['courriels', 'Courriels'],
 ] as const
 
 export default function Admin() {
@@ -215,7 +243,7 @@ export default function Admin() {
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [created, setCreated] = useState<{ token: string; email: string } | null>(null)
+  const [created, setCreated] = useState<{ token: string; email: string; sent: InvitationSent | null; sendError: string | null } | null>(null)
 
   const rows = useQuery({
     queryKey: ['admin', 'adhesions'],
@@ -238,6 +266,21 @@ export default function Admin() {
     },
   })
 
+  const outbox = useQuery({
+    queryKey: ['admin', 'courriels'],
+    enabled: tab === 'courriels',
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('email_outbox')
+        .select('id, template, to_email, status, subject, body_text, error, created_at')
+        .order('created_at', { ascending: false })
+        .limit(100)
+      if (error) throw error
+      return data as OutboxRow[]
+    },
+  })
+  const mail = useQuery({ queryKey: ['etat-courriels'], queryFn: emailStatus, staleTime: 60_000, retry: false })
+
   const all = rows.data ?? []
   const pending = all.filter((r) => r.status !== 'active')
   const active = all.filter((r) => r.status === 'active')
@@ -254,7 +297,14 @@ export default function Admin() {
     setCreated(null)
     try {
       const token = await rpc<string>('create_invitation', { p_email: email, p_message: message })
-      setCreated({ token, email: email.trim() })
+      let sent: InvitationSent | null = null
+      let sendError: string | null = null
+      try {
+        sent = await sendInvitationEmail(token)
+      } catch (err) {
+        sendError = (err as Error).message
+      }
+      setCreated({ token, email: email.trim(), sent, sendError })
       setEmail('')
       setMessage('')
       await reload()
@@ -365,12 +415,12 @@ export default function Admin() {
               </Field>
               <div>
                 <Button type="submit" loading={busy}>
-                  Créer l'invitation
+                  Envoyer l'invitation
                 </Button>
               </div>
             </form>
           </Panel>
-          {created && <InviteLink token={created.token} email={created.email} />}
+          {created && <InviteLink token={created.token} email={created.email} sent={created.sent} sendError={created.sendError} />}
 
           {(invites.data ?? []).length === 0 ? (
             <p className="text-ink-3">Aucune invitation envoyée pour l'instant.</p>
@@ -398,6 +448,42 @@ export default function Admin() {
                   ))}
                 </tbody>
               </table>
+            </Panel>
+          )}
+        </div>
+      )}
+      {tab === 'courriels' && (
+        <div className="flex flex-col gap-4">
+          {mail.data?.mode === 'simulation' && (
+            <Notice tone="warn" title="Envoi de courriels en mode simulation">
+              Aucun service d'envoi n'est branché. Les courriels ci-dessous ont été rédigés, mais aucun n'est parti.
+            </Notice>
+          )}
+          {(outbox.data ?? []).length === 0 ? (
+            <p className="text-ink-3">Aucun courriel pour l'instant. Reçus, confirmations et invitations apparaîtront ici.</p>
+          ) : (
+            <Panel>
+              <ul className="divide-y divide-line">
+                {outbox.data!.map((c) => (
+                  <li key={c.id}>
+                    <details>
+                      <summary className="flex cursor-pointer flex-wrap items-center justify-between gap-3 px-5 py-3.5">
+                        <span className="min-w-0">
+                          <span className="block truncate font-medium">{c.subject ?? TEMPLATE_LABEL[c.template] ?? c.template}</span>
+                          <span className="block truncate text-sm text-ink-3">
+                            {c.to_email}, {longDate(c.created_at)}
+                          </span>
+                        </span>
+                        {mailState(c.status)}
+                      </summary>
+                      <pre className="overflow-x-auto border-t border-line bg-page px-5 py-4 font-sans text-sm whitespace-pre-wrap text-ink-2">
+                        {c.error ? `Erreur : ${c.error}\n\n` : ''}
+                        {c.body_text ?? "Ce courriel n'a pas encore été rédigé."}
+                      </pre>
+                    </details>
+                  </li>
+                ))}
+              </ul>
             </Panel>
           )}
         </div>

@@ -38,6 +38,7 @@ const MESSAGES: Record<string, string> = {
   message_trop_long: 'Le message ne peut pas dépasser 500 caractères.',
   quota_invitations: "Vous avez atteint la limite de 50 invitations par jour.",
   adhesion_requise_pour_inviter: "Vous pourrez inviter vos collègues dès que l'adhésion sera payée.",
+  destinataire_ne_souhaite_plus_etre_invite: "Cette personne a demandé à ne plus recevoir d'invitations.",
   administrateur_ne_peut_pas_quitter: "L'administrateur du compte ne peut pas quitter son organisation.",
 }
 

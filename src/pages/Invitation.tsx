@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { FocusShell } from '../layouts/Shells'
 import { clearNext, rememberNext, useSession } from '../lib/session'
-import { rpc } from '../lib/supabase'
+import { rpc, supabase } from '../lib/supabase'
 import { Button, Notice, Panel, Splash } from '../ui'
 import { EmailSignIn } from './Login'
 
@@ -22,11 +22,33 @@ interface InvitationInfo {
  */
 export default function Invitation() {
   const { token = '' } = useParams()
-  const { session, ctx, refresh, signOut } = useSession()
+  const { session, booting, ctx, refresh, signOut } = useSession()
   const navigate = useNavigate()
+  const [params, setParams] = useSearchParams()
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [loginExpired, setLoginExpired] = useState(false)
   const started = useRef(false)
+  const loginTried = useRef(false)
+
+  // Arrivée depuis le courriel : le lien porte un jeton qui connecte en un clic.
+  // S'il a expiré, la page propose simplement d'en recevoir un nouveau.
+  const jeton = params.get('jeton')
+  const genre = params.get('genre')
+  useEffect(() => {
+    if (!jeton || booting || loginTried.current) return
+    loginTried.current = true
+    const forget = () => setParams({}, { replace: true })
+    if (session) return forget()
+    void (async () => {
+      let { error } = await supabase.auth.verifyOtp({ token_hash: jeton, type: 'email' })
+      if (error && (genre === 'signup' || genre === 'invite')) {
+        ;({ error } = await supabase.auth.verifyOtp({ token_hash: jeton, type: genre }))
+      }
+      if (error) setLoginExpired(true)
+      forget()
+    })()
+  }, [jeton, genre, booting, session, setParams])
 
   const info = useQuery({
     queryKey: ['invitation', token],
@@ -129,10 +151,17 @@ export default function Invitation() {
                   </Button>
                 </div>
               </div>
-            ) : session ? (
+            ) : session || (jeton && !loginExpired) ? (
               <p className="text-ink-2" role="status">
                 Ouverture de votre espace…
               </p>
+            ) : loginExpired ? (
+              <div className="flex flex-col gap-4">
+                <Notice tone="warn" title="Le lien de connexion du courriel a expiré.">
+                  Votre invitation reste valide. Recevez un nouveau lien ci-dessous.
+                </Notice>
+                <EmailSignIn fixedEmail={d.email} />
+              </div>
             ) : status === 'accepted' ? (
               <div className="flex flex-col gap-4">
                 <p className="text-ink-2">Cette invitation a déjà été acceptée. Connectez-vous pour retrouver votre espace.</p>
